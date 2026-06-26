@@ -1,0 +1,256 @@
+from aiogram import Router
+from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from bot.database.models import User
+from bot.database.repositories.settings import SettingsRepository
+from bot.database.repositories.lottery import LotteryRepository
+from bot.keyboards.admin.games import games_admin_kb, game_config_kb, cancel_kb as lottery_cancel_kb
+from bot.keyboards.admin.lottery import lottery_admin_kb, lottery_end_type_kb
+from bot.keyboards.admin.main import back_to_admin_kb
+from bot.states.admin import AdminGameStates, AdminLotteryStates
+from bot.handlers.admin.stats import _is_admin
+
+router = Router()
+
+GAME_SETTINGS = {
+    "football": {"win_coef": "Коэф. победы", "win_chance": "Шанс победы"},
+    "basketball": {"win_coef": "Коэф. победы", "win_chance": "Шанс победы"},
+    "bowling": {"win_coef": "Коэф. победы", "win_chance": "Шанс победы"},
+    "dice": {"win_coef": "Коэф. победы", "win_chance": "Шанс победы"},
+    "darts": {"win_coef": "Коэф. победы", "win_chance": "Шанс победы"},
+    "slots": {"win_coef": "Коэф. победы", "win_chance": "Шанс победы"},
+}
+
+
+@router.callback_query(lambda c: c.data == "admin:games")
+async def cb_games(callback: CallbackQuery, db_user: User, session: AsyncSession) -> None:
+    if not _is_admin(db_user): return
+    repo = SettingsRepository(session)
+    configs = {}
+    for game in GAME_SETTINGS:
+        configs[game] = {"enabled": await repo.get_bool(f"game_{game}_enabled", True)}
+    try:
+        await callback.message.edit_text(
+            "🎮 <b>Настройки игр</b>",
+            parse_mode="HTML",
+            reply_markup=games_admin_kb(configs),
+        )
+    except Exception:
+        await callback.message.answer("🎮 <b>Настройки игр</b>", parse_mode="HTML", reply_markup=games_admin_kb(configs))
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin:game_toggle:"))
+async def cb_game_toggle(callback: CallbackQuery, db_user: User, session: AsyncSession) -> None:
+    if not _is_admin(db_user): return
+    game_type = callback.data.split(":")[2]
+    repo = SettingsRepository(session)
+    current = await repo.get_bool(f"game_{game_type}_enabled", True)
+    await repo.set(f"game_{game_type}_enabled", "0" if current else "1")
+    new_state = not current
+    await callback.answer(f"{'✅ Включено' if new_state else '❌ Отключено'}")
+    await cb_games(callback, db_user, session)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin:game_cfg:"))
+async def cb_game_edit(callback: CallbackQuery, db_user: User, session: AsyncSession) -> None:
+    if not _is_admin(db_user): return
+    game_type = callback.data.split(":")[2]
+    repo = SettingsRepository(session)
+    win_coef = await repo.get_float(f"game_{game_type}_win_coef", 1.9)
+    win_chance = await repo.get_float(f"game_{game_type}_win_chance", 50.0)
+    min_bet = await repo.get_float(f"game_{game_type}_min_bet", 1.0)
+    enabled = await repo.get_bool(f"game_{game_type}_enabled", True)
+    text = (
+        f"⚙️ <b>{game_type.title()}</b>\n\n"
+        f"Статус: {'✅ включена' if enabled else '❌ отключена'}\n"
+        f"Коэф. победы: <b>{win_coef:.2f}x</b>\n"
+        f"Шанс победы: <b>{win_chance:.1f}%</b>\n"
+        f"Мин. ставка: <b>{min_bet:.1f} ⭐</b>"
+    )
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=game_config_kb(game_type, enabled))
+    except Exception:
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=game_config_kb(game_type, enabled))
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin:game_coeffs:"))
+async def cb_game_coeffs(callback: CallbackQuery, db_user: User, state: FSMContext) -> None:
+    if not _is_admin(db_user): return
+    game_type = callback.data.split(":")[2]
+    await state.set_state(AdminGameStates.enter_value)
+    await state.update_data(game_type=game_type, param="win_coef")
+    await callback.message.answer(f"Введи коэффициент победы для {game_type} (напр: 1.9):", reply_markup=lottery_cancel_kb())
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin:game_minbet:"))
+async def cb_game_minbet(callback: CallbackQuery, db_user: User, state: FSMContext) -> None:
+    if not _is_admin(db_user): return
+    game_type = callback.data.split(":")[2]
+    await state.set_state(AdminGameStates.enter_value)
+    await state.update_data(game_type=game_type, param="min_bet")
+    await callback.message.answer(f"Введи мин. ставку для {game_type} (напр: 1):", reply_markup=lottery_cancel_kb())
+    await callback.answer()
+
+
+@router.message(AdminGameStates.enter_value)
+async def msg_game_value(message: Message, state: FSMContext, session: AsyncSession, db_user: User) -> None:
+    if not _is_admin(db_user): return
+    try:
+        value = float(message.text.strip().replace(",", "."))
+        if value <= 0: raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer("❌ Введи положительное число:")
+        return
+    data = await state.get_data()
+    await state.clear()
+    repo = SettingsRepository(session)
+    await repo.set(f"game_{data['game_type']}_{data['param']}", str(value))
+    await message.answer(f"✅ Сохранено: <b>{data['game_type']}.{data['param']} = {value}</b>", parse_mode="HTML", reply_markup=back_to_admin_kb())
+
+
+# ---- Lottery admin ----
+
+@router.callback_query(lambda c: c.data == "admin:lottery")
+async def cb_lottery(callback: CallbackQuery, db_user: User, session: AsyncSession) -> None:
+    if not _is_admin(db_user): return
+    repo = LotteryRepository(session)
+    active = await repo.get_active()
+    if active:
+        text = (
+            f"🎟 <b>Активная лотерея #{active.id}</b>\n\n"
+            f"Билетов продано: <b>{active.tickets_sold}</b>\n"
+            f"Призовой фонд: <b>{float(active.prize_pool):.2f} ⭐</b>\n"
+            f"Лимит билетов: <b>{active.ticket_limit or '∞'}</b>\n"
+            f"Цена билета: <b>{float(active.ticket_price):.1f} ⭐</b>"
+        )
+    else:
+        text = "🎟 <b>Лотерея</b>\n\nАктивной лотереи нет."
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=lottery_admin_kb(bool(active)))
+    except Exception:
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=lottery_admin_kb(bool(active)))
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data == "admin:lottery_new")
+async def cb_lottery_new(callback: CallbackQuery, db_user: User, state: FSMContext) -> None:
+    if not _is_admin(db_user): return
+    await state.set_state(AdminLotteryStates.enter_ticket_price)
+    await callback.message.answer("💰 Введи цену одного билета (⭐):", reply_markup=lottery_cancel_kb())
+    await callback.answer()
+
+
+@router.message(AdminLotteryStates.enter_ticket_price)
+async def msg_lottery_price(message: Message, state: FSMContext, db_user: User) -> None:
+    if not _is_admin(db_user): return
+    try:
+        price = float(message.text.strip().replace(",", "."))
+        if price <= 0: raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer("❌ Введи положительное число:", reply_markup=lottery_cancel_kb())
+        return
+    await state.update_data(ticket_price=price)
+    await state.set_state(AdminLotteryStates.enter_ticket_limit)
+    await message.answer("🎟 Максимум билетов (0 = без лимита):", reply_markup=lottery_cancel_kb())
+
+
+@router.message(AdminLotteryStates.enter_ticket_limit)
+async def msg_lottery_limit(message: Message, state: FSMContext, db_user: User) -> None:
+    if not _is_admin(db_user): return
+    try:
+        limit = int(message.text.strip())
+        if limit < 0: raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer("❌ Введи неотрицательное целое:", reply_markup=lottery_cancel_kb())
+        return
+    await state.update_data(ticket_limit=limit)
+    await state.set_state(AdminLotteryStates.choose_end_type)
+    await message.answer("⏱ Выбери условие завершения лотереи:", reply_markup=lottery_end_type_kb())
+
+
+@router.callback_query(AdminLotteryStates.choose_end_type, lambda c: c.data and c.data.startswith("lottery_end:"))
+async def cb_lottery_end_type(callback: CallbackQuery, db_user: User, state: FSMContext) -> None:
+    if not _is_admin(db_user): return
+    end_type = callback.data.split(":")[1]
+    await state.update_data(end_type=end_type)
+    prompts = {
+        "tickets": "🎟 Введи кол-во билетов для розыгрыша:",
+        "time": "⏰ Введи кол-во часов до розыгрыша:",
+        "commission": "💰 Введи сумму комиссии для розыгрыша (⭐):",
+    }
+    await state.set_state(AdminLotteryStates.enter_end_value)
+    await callback.message.answer(prompts[end_type], reply_markup=lottery_cancel_kb())
+    await callback.answer()
+
+
+@router.message(AdminLotteryStates.enter_end_value)
+async def msg_lottery_end_value(message: Message, state: FSMContext, session: AsyncSession, db_user: User) -> None:
+    if not _is_admin(db_user): return
+    try:
+        val = float(message.text.strip().replace(",", "."))
+        if val <= 0: raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer("❌ Введи положительное число:", reply_markup=lottery_cancel_kb())
+        return
+    data = await state.get_data()
+    await state.clear()
+    repo = LotteryRepository(session)
+    lottery = await repo.create(
+        ticket_price=data["ticket_price"],
+        ticket_limit=data["ticket_limit"],
+        end_type=data["end_type"],
+        end_value=val,
+    )
+    await message.answer(
+        f"✅ <b>Лотерея #{lottery.id} создана!</b>\n\nЦена билета: {float(lottery.ticket_price):.1f} ⭐",
+        parse_mode="HTML",
+        reply_markup=back_to_admin_kb(),
+    )
+
+
+@router.callback_query(lambda c: c.data == "admin:lottery_draw")
+async def cb_lottery_draw(callback: CallbackQuery, db_user: User, session: AsyncSession) -> None:
+    if not _is_admin(db_user): return
+    repo = LotteryRepository(session)
+    active = await repo.get_active()
+    if not active:
+        await callback.answer("Нет активной лотереи.", show_alert=True)
+        return
+    winner_id = await repo.draw_random(active)
+    if not winner_id:
+        await callback.answer("❌ Нет участников.", show_alert=True)
+        return
+    prize = float(active.prize_pool)
+    await repo.finish(active, winner_id)
+    winner = await session.get(User, winner_id)
+    if winner:
+        winner.stars_balance = round(float(winner.stars_balance) + prize, 2)
+        await session.commit()
+    try:
+        await callback.bot.send_message(
+            winner_id,
+            f"🎉 <b>Поздравляем!</b> Вы выиграли в лотерее!\n\nПриз: <b>{float(active.prize_pool):.2f} ⭐</b>",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    await callback.answer(f"✅ Победитель: {winner_id}", show_alert=True)
+    await cb_lottery(callback, db_user, session)
+
+
+@router.callback_query(lambda c: c.data == "admin:lottery_cancel")
+async def cb_lottery_cancel_active(callback: CallbackQuery, db_user: User, session: AsyncSession) -> None:
+    if not _is_admin(db_user): return
+    repo = LotteryRepository(session)
+    active = await repo.get_active()
+    if not active:
+        await callback.answer("Нет активной лотереи.", show_alert=True)
+        return
+    await repo.cancel(active)
+    await callback.answer("✅ Лотерея отменена.")
+    await cb_lottery(callback, db_user, session)

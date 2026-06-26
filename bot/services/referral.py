@@ -1,0 +1,73 @@
+import logging
+
+from aiogram import Bot
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from bot.config import get_settings
+from bot.database.models import User
+from bot.database.repositories.settings import SettingsRepository
+from bot.database.repositories.user import UserRepository
+
+logger = logging.getLogger(__name__)
+
+
+async def check_referral_reward(user: User, session: AsyncSession, bot: Bot | None = None) -> None:
+    """Check if this user has fulfilled conditions → pay referral reward to referrer once."""
+    if user.referral_reward_given or not user.referrer_id:
+        return
+
+    repo = SettingsRepository(session)
+    min_tasks = await repo.get_int("min_tasks_for_referral", 3)
+    reward = await repo.get_float("referral_reward", 3.0)
+
+    settings = get_settings()
+    if (settings.tgrass_code or settings.botohub_key) and not user.sponsors_verified:
+        return
+    if user.tasks_completed_count < min_tasks:
+        return
+
+    # All conditions met — reward the referrer
+    user_repo = UserRepository(session)
+    referrer = await user_repo.get(user.referrer_id)
+    if not referrer:
+        return
+
+    user.referral_reward_given = True
+    referrer.stars_balance += reward
+    await session.commit()
+
+    username_display = f"@{user.username}" if user.username else user.first_name
+    if bot:
+        try:
+            await bot.send_message(
+                referrer.user_id,
+                f"🎉 Вам начислено <b>{reward:.0f} ⭐</b> за пользователя {username_display}.",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.warning("Failed to notify referrer %s: %s", referrer.user_id, e)
+
+
+async def notify_referrer_joined(referrer_id: int, new_user: User, session: AsyncSession, bot: Bot) -> None:
+    """Notify referrer that someone joined via their link."""
+    settings = get_settings()
+    repo = SettingsRepository(session)
+    reward = await repo.get_float("referral_reward", 3.0)
+    min_tasks = await repo.get_int("min_tasks_for_referral", 3)
+    username_display = f"@{new_user.username}" if new_user.username else new_user.first_name
+
+    conditions: list[str] = []
+    if settings.tgrass_code or settings.botohub_key:
+        conditions.append("• подпишется на всех спонсоров;")
+    conditions.append(f"• выполнит минимум <b>{min_tasks}</b> заданий.")
+
+    try:
+        await bot.send_message(
+            referrer_id,
+            f"⚡ Пользователь {username_display} присоединился по вашей ссылке!\n\n"
+            f"Вы получите <b>{reward:.0f} ⭐</b>, когда он:\n"
+            + "\n".join(conditions),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("Failed to notify referrer %s of new join: %s", referrer_id, e)

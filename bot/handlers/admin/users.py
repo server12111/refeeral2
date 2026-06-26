@@ -1,0 +1,279 @@
+from aiogram import Router
+from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from bot.database.models import User
+from bot.database.repositories.user import UserRepository
+from bot.database.repositories.withdrawal import WithdrawalRepository
+from bot.keyboards.admin.users import users_menu_kb, user_actions_kb, cancel_kb
+from bot.keyboards.admin.main import back_to_admin_kb
+from bot.states.admin import AdminUserStates
+from bot.handlers.admin.stats import _is_admin
+
+router = Router()
+
+
+@router.callback_query(lambda c: c.data == "admin:users")
+async def cb_users(callback: CallbackQuery, db_user: User) -> None:
+    if not _is_admin(db_user):
+        await callback.answer("❌ Нет доступа.", show_alert=True)
+        return
+    try:
+        await callback.message.edit_text(
+            "👥 <b>Управление пользователями</b>\n\nНайди пользователя по ID или Username:",
+            parse_mode="HTML",
+            reply_markup=users_menu_kb(),
+        )
+    except Exception:
+        await callback.message.answer("👥 Управление пользователями", reply_markup=users_menu_kb())
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data == "admin:user_search")
+async def cb_user_search(callback: CallbackQuery, db_user: User, state: FSMContext) -> None:
+    if not _is_admin(db_user):
+        await callback.answer("❌ Нет доступа.", show_alert=True)
+        return
+    await state.set_state(AdminUserStates.search)
+    try:
+        await callback.message.edit_text(
+            "🔍 Введи ID или @username пользователя:",
+            reply_markup=cancel_kb("admin:users"),
+        )
+    except Exception:
+        await callback.message.answer("🔍 Введи ID или @username:", reply_markup=cancel_kb("admin:users"))
+    await callback.answer()
+
+
+@router.message(AdminUserStates.search)
+async def msg_user_search(message: Message, state: FSMContext, session: AsyncSession, db_user: User) -> None:
+    if not _is_admin(db_user):
+        return
+    await state.clear()
+    query = (message.text or "").strip()
+    u_repo = UserRepository(session)
+
+    target = None
+    if query.startswith("@"):
+        target = await u_repo.find_by_username(query[1:])
+    else:
+        try:
+            target = await u_repo.get(int(query))
+        except ValueError:
+            target = await u_repo.find_by_username(query)
+
+    if not target:
+        await message.answer("❌ Пользователь не найден.", reply_markup=back_to_admin_kb())
+        return
+
+    username_display = f"@{target.username}" if target.username else "нет"
+    text = (
+        f"👤 <b>Пользователь</b>\n\n"
+        f"ID: <code>{target.user_id}</code>\n"
+        f"Имя: <b>{target.first_name}</b>\n"
+        f"Username: {username_display}\n"
+        f"💰 Баланс: <b>{float(target.stars_balance):.2f} ⭐</b>\n"
+        f"👥 Рефералов: <b>{target.referrals_count}</b>\n"
+        f"📋 Заданий: <b>{target.tasks_completed_count}</b>\n"
+        f"🚫 Заблокирован: {'Да' if target.is_blocked else 'Нет'}"
+    )
+    await message.answer(text, parse_mode="HTML", reply_markup=user_actions_kb(target.user_id, target.is_blocked))
+
+
+async def _get_target_and_check(callback: CallbackQuery, session: AsyncSession, db_user: User, user_id: int) -> User | None:
+    if not _is_admin(db_user):
+        await callback.answer("❌ Нет доступа.", show_alert=True)
+        return None
+    u_repo = UserRepository(session)
+    target = await u_repo.get(user_id)
+    if not target:
+        await callback.answer("❌ Пользователь не найден.", show_alert=True)
+    return target
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin:user_block:"))
+async def cb_user_block(callback: CallbackQuery, session: AsyncSession, db_user: User) -> None:
+    uid = int(callback.data.split(":")[2])
+    target = await _get_target_and_check(callback, session, db_user, uid)
+    if not target: return
+    target.is_blocked = True
+    await session.commit()
+    await callback.answer("✅ Пользователь заблокирован.", show_alert=True)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=user_actions_kb(uid, True))
+    except Exception:
+        pass
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin:user_unblock:"))
+async def cb_user_unblock(callback: CallbackQuery, session: AsyncSession, db_user: User) -> None:
+    uid = int(callback.data.split(":")[2])
+    target = await _get_target_and_check(callback, session, db_user, uid)
+    if not target: return
+    target.is_blocked = False
+    await session.commit()
+    await callback.answer("✅ Пользователь разблокирован.", show_alert=True)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=user_actions_kb(uid, False))
+    except Exception:
+        pass
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin:user_add:"))
+async def cb_user_add_stars(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:
+    if not _is_admin(db_user): return
+    uid = int(callback.data.split(":")[2])
+    await state.set_state(AdminUserStates.add_stars)
+    await state.update_data(target_id=uid)
+    await callback.message.answer(f"➕ Введи кол-во ⭐ для начисления пользователю {uid}:", reply_markup=cancel_kb("admin:users"))
+    await callback.answer()
+
+
+@router.message(AdminUserStates.add_stars)
+async def msg_add_stars(message: Message, state: FSMContext, session: AsyncSession, db_user: User) -> None:
+    if not _is_admin(db_user): return
+    data = await state.get_data()
+    await state.clear()
+    try:
+        amount = float(message.text.strip().replace(",", "."))
+        if amount <= 0: raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer("❌ Введи положительное число.")
+        return
+    u_repo = UserRepository(session)
+    target = await u_repo.get(data["target_id"])
+    if not target:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    target.stars_balance = round(float(target.stars_balance) + amount, 2)
+    await session.commit()
+    await message.answer(f"✅ Начислено <b>+{amount:.2f} ⭐</b> пользователю <code>{target.user_id}</code>. Баланс: <b>{float(target.stars_balance):.2f} ⭐</b>", parse_mode="HTML", reply_markup=back_to_admin_kb())
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin:user_sub:"))
+async def cb_user_sub_stars(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:
+    if not _is_admin(db_user): return
+    uid = int(callback.data.split(":")[2])
+    await state.set_state(AdminUserStates.sub_stars)
+    await state.update_data(target_id=uid)
+    await callback.message.answer(f"➖ Введи кол-во ⭐ для списания у пользователя {uid}:", reply_markup=cancel_kb("admin:users"))
+    await callback.answer()
+
+
+@router.message(AdminUserStates.sub_stars)
+async def msg_sub_stars(message: Message, state: FSMContext, session: AsyncSession, db_user: User) -> None:
+    if not _is_admin(db_user): return
+    data = await state.get_data()
+    await state.clear()
+    try:
+        amount = float(message.text.strip().replace(",", "."))
+        if amount <= 0: raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer("❌ Введи положительное число.")
+        return
+    u_repo = UserRepository(session)
+    target = await u_repo.get(data["target_id"])
+    if not target:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    target.stars_balance = round(max(0.0, float(target.stars_balance) - amount), 2)
+    await session.commit()
+    await message.answer(f"✅ Списано <b>-{amount:.2f} ⭐</b> у пользователя <code>{target.user_id}</code>. Баланс: <b>{float(target.stars_balance):.2f} ⭐</b>", parse_mode="HTML", reply_markup=back_to_admin_kb())
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin:user_refs:"))
+async def cb_user_add_refs(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:
+    if not _is_admin(db_user): return
+    uid = int(callback.data.split(":")[2])
+    await state.set_state(AdminUserStates.add_refs)
+    await state.update_data(target_id=uid)
+    await callback.message.answer(f"👥 Введи кол-во рефералов для начисления пользователю {uid}:", reply_markup=cancel_kb("admin:users"))
+    await callback.answer()
+
+
+@router.message(AdminUserStates.add_refs)
+async def msg_add_refs(message: Message, state: FSMContext, session: AsyncSession, db_user: User) -> None:
+    if not _is_admin(db_user): return
+    data = await state.get_data()
+    await state.clear()
+    try:
+        amount = int(message.text.strip())
+        if amount <= 0: raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer("❌ Введи целое положительное число.")
+        return
+    u_repo = UserRepository(session)
+    target = await u_repo.get(data["target_id"])
+    if not target:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    target.referrals_count += amount
+    await session.commit()
+    await message.answer(f"✅ Начислено <b>+{amount}</b> рефералов. Итого: <b>{target.referrals_count}</b>", parse_mode="HTML", reply_markup=back_to_admin_kb())
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin:withdraw_approve:"))
+async def cb_withdraw_approve(callback: CallbackQuery, session: AsyncSession, db_user: User) -> None:
+    if not _is_admin(db_user):
+        await callback.answer("❌ Нет доступа.", show_alert=True)
+        return
+    wid = int(callback.data.split(":")[2])
+    w_repo = WithdrawalRepository(session)
+    w = await w_repo.approve(wid)
+    if not w:
+        await callback.answer("❌ Заявка уже обработана.", show_alert=True)
+        return
+    try:
+        await callback.message.edit_text(
+            callback.message.text + "\n\n✅ <b>Принято</b>",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    try:
+        await callback.bot.send_message(
+            w.user_id,
+            f"✅ <b>Заявка #{w.id} одобрена!</b>\n\nСумма: <b>{float(w.amount):.0f} ⭐</b>\nСкоро вы получите выплату.",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    await callback.answer("✅ Одобрено")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin:withdraw_reject:"))
+async def cb_withdraw_reject(callback: CallbackQuery, session: AsyncSession, db_user: User) -> None:
+    if not _is_admin(db_user):
+        await callback.answer("❌ Нет доступа.", show_alert=True)
+        return
+    wid = int(callback.data.split(":")[2])
+    w_repo = WithdrawalRepository(session)
+    w = await w_repo.reject(wid)
+    if not w:
+        await callback.answer("❌ Заявка уже обработана.", show_alert=True)
+        return
+
+    # Refund
+    u_repo = UserRepository(session)
+    user = await u_repo.get(w.user_id)
+    if user:
+        user.stars_balance += w.amount
+        await session.commit()
+
+    try:
+        await callback.message.edit_text(
+            callback.message.text + "\n\n❌ <b>Отклонено</b>",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    try:
+        await callback.bot.send_message(
+            w.user_id,
+            f"❌ <b>Заявка #{w.id} отклонена.</b>\n\nСумма <b>{float(w.amount):.0f} ⭐</b> возвращена на баланс.",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    await callback.answer("❌ Отклонено")
