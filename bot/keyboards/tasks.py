@@ -30,7 +30,10 @@ def task_detail_kb(task_id: int, url: str) -> InlineKeyboardMarkup:
     if url:
         builder.row(InlineKeyboardButton(text="➡️ Перейти к заданию", url=url, style="primary"))
     builder.row(InlineKeyboardButton(text="✅ Проверить выполнение", callback_data=f"task:check:{task_id}", style="success"))
-    builder.row(InlineKeyboardButton(text="◀️ Назад", callback_data="menu:tasks"))
+    builder.row(
+        InlineKeyboardButton(text="⏭ Пропустить", callback_data=f"task:skip:{task_id}"),
+        InlineKeyboardButton(text="◀️ Назад", callback_data="menu:tasks"),
+    )
     return builder.as_markup()
 
 

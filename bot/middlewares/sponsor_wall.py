@@ -90,26 +90,33 @@ class SponsorWallMiddleware(BaseMiddleware):
         else:
             logger.warning("WALL uid=%s botohub_error=%s", uid, botohub_result)
 
-        unsubscribed: list[dict] = []
-        if isinstance(tgrass_result, list):
-            unsubscribed.extend(tgrass_result)
-        if isinstance(botohub_result, list):
-            unsubscribed.extend(botohub_result)
+        botohub_list = botohub_result if isinstance(botohub_result, list) else []
+        tgrass_list = tgrass_result if isinstance(tgrass_result, list) else []
+        unsubscribed = botohub_list + tgrass_list
 
-        logger.info("WALL uid=%s total_unsubscribed=%d", uid, len(unsubscribed))
+        logger.info("WALL uid=%s total_unsubscribed=%d (botohub=%d tgrass=%d)",
+                    uid, len(unsubscribed), len(botohub_list), len(tgrass_list))
 
         if not unsubscribed:
             logger.info("WALL uid=%s all-subscribed → verify", uid)
             db_user.sponsors_verified = True
             await session.commit()
-            from bot.services.referral import check_referral_reward
+            from bot.services.referral import check_referral_reward, notify_user_sponsors_verified
             await check_referral_reward(db_user, session, data.get("bot"))
+            if not db_user.referral_reward_given:
+                bot = data.get("bot")
+                if bot:
+                    await notify_user_sponsors_verified(db_user, session, bot)
             return await handler(event, data)
 
-        # Limit shown channels
+        # Limit shown channels — BotoHub first, TGrass fills remainder
         s_repo = SettingsRepository(session)
         max_ch = await s_repo.get_int("sponsor_max_channels", 3)
-        shown = unsubscribed[:max_ch] if max_ch > 0 else unsubscribed
+        if max_ch > 0:
+            tgrass_slots = max(0, max_ch - len(botohub_list))
+            shown = (botohub_list[:max_ch] + tgrass_list[:tgrass_slots])[:max_ch]
+        else:
+            shown = unsubscribed
 
         builder = InlineKeyboardBuilder()
         btns = [

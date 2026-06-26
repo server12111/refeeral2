@@ -16,7 +16,7 @@ from bot.database.repositories.user import UserRepository
 from bot.keyboards.main import main_menu_kb
 from bot.services.adv import send_ad
 from bot.services.captcha import generate_fruit_captcha
-from bot.services.referral import notify_referrer_joined, check_referral_reward
+from bot.services.referral import notify_referrer_joined, check_referral_reward, notify_user_sponsors_verified
 from bot.states.captcha import CaptchaStates
 
 router = Router()
@@ -86,16 +86,18 @@ async def cmd_start(
             check_botohub(db_user.user_id, settings.botohub_key),
             return_exceptions=True,
         )
-        unsubscribed: list[dict] = []
-        if isinstance(tgrass_result, list):
-            unsubscribed.extend(tgrass_result)
-        if isinstance(botohub_result, list):
-            unsubscribed.extend(botohub_result)
+        botohub_list = botohub_result if isinstance(botohub_result, list) else []
+        tgrass_list = tgrass_result if isinstance(tgrass_result, list) else []
+        unsubscribed = botohub_list + tgrass_list
 
         if unsubscribed:
             s_repo = SettingsRepository(session)
             max_ch = await s_repo.get_int("sponsor_max_channels", 3)
-            shown = unsubscribed[:max_ch] if max_ch > 0 else unsubscribed
+            if max_ch > 0:
+                tgrass_slots = max(0, max_ch - len(botohub_list))
+                shown = (botohub_list[:max_ch] + tgrass_list[:tgrass_slots])[:max_ch]
+            else:
+                shown = unsubscribed
 
             from aiogram.utils.keyboard import InlineKeyboardBuilder
             from aiogram.types import InlineKeyboardButton
@@ -157,6 +159,8 @@ async def cb_sponsor_check(
         db_user.sponsors_verified = True
         await session.commit()
         await check_referral_reward(db_user, session, bot)
+        if not db_user.referral_reward_given:
+            await notify_user_sponsors_verified(db_user, session, bot)
         repo = ContentRepository(session)
         text = await repo.get_text("welcome")
         photo = await repo.get_photo("welcome")
@@ -241,6 +245,8 @@ async def cb_captcha_pick(
     db_user.sponsors_verified = True
     await session.commit()
     await check_referral_reward(db_user, session, bot)
+    if not db_user.referral_reward_given:
+        await notify_user_sponsors_verified(db_user, session, bot)
 
     repo = ContentRepository(session)
     text = await repo.get_text("welcome")

@@ -25,7 +25,9 @@ async def get_sponsors(api_key: str, user_id: int, chat_id: int, max_sponsors: i
                 headers=_headers(api_key),
             ) as resp:
                 data = await resp.json(content_type=None)
-                return data.get("sponsors", [])
+                sponsors = data.get("sponsors", [])
+                logger.info("PiarFlow get_sponsors user_id=%d chat_id=%d → %d sponsors", user_id, chat_id, len(sponsors))
+                return sponsors
     except Exception as e:
         logger.warning("PiarFlow get_sponsors error: %s", e)
     return []

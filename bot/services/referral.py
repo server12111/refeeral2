@@ -33,7 +33,7 @@ async def check_referral_reward(user: User, session: AsyncSession, bot: Bot | No
         return
 
     user.referral_reward_given = True
-    referrer.stars_balance += reward
+    referrer.stars_balance = round(float(referrer.stars_balance) + reward, 2)
     await session.commit()
 
     username_display = f"@{user.username}" if user.username else user.first_name
@@ -46,6 +46,32 @@ async def check_referral_reward(user: User, session: AsyncSession, bot: Bot | No
             )
         except Exception as e:
             logger.warning("Failed to notify referrer %s: %s", referrer.user_id, e)
+
+
+async def notify_user_sponsors_verified(user: User, session: AsyncSession, bot: Bot) -> None:
+    """Tell the referred user they've passed sponsors and how many tasks remain."""
+    if not user.referrer_id or user.referral_reward_given:
+        return
+    repo = SettingsRepository(session)
+    min_tasks = await repo.get_int("min_tasks_for_referral", 3)
+    remaining = max(0, min_tasks - user.tasks_completed_count)
+    if remaining <= 0:
+        return
+    if remaining == 1:
+        word = "задание"
+    elif remaining in (2, 3, 4):
+        word = "задания"
+    else:
+        word = "заданий"
+    try:
+        await bot.send_message(
+            user.user_id,
+            f"✅ <b>Вы подписались на спонсоров!</b>\n\n"
+            f"Осталось выполнить ещё <b>{remaining} {word}</b> для активации реферальной программы.",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("Failed to notify user %s sponsors passed: %s", user.user_id, e)
 
 
 async def notify_referrer_joined(referrer_id: int, new_user: User, session: AsyncSession, bot: Bot) -> None:

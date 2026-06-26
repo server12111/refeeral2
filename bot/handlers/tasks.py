@@ -96,6 +96,49 @@ async def cb_tasks_menu(callback: CallbackQuery, db_user: User, session: AsyncSe
     await callback.answer()
 
 
+async def _show_next_task(callback: CallbackQuery, db_user: User, session: AsyncSession, current_task_id: int | None = None) -> None:
+    """Show next uncompleted task, or task list if none left."""
+    task_repo = TaskRepository(session)
+    all_tasks = await task_repo.all_active()
+    completed_ids = await task_repo.completed_ids(db_user.user_id)
+    uncompleted = [t for t in all_tasks if t.id not in completed_ids and t.id != current_task_id]
+
+    if not uncompleted:
+        s_repo = SettingsRepository(session)
+        tasks_reward = await s_repo.get_float("tasks_reward", 0.3)
+        text = (
+            f"📋 <b>Задания</b>\n\n"
+            f"Выполняй задания и получай <b>{tasks_reward:.1f} ⭐</b> за каждое!\n"
+            f"✅ Выполнено: <b>{db_user.tasks_completed_count}</b>\n\n"
+            f"🎉 Все доступные задания выполнены!"
+        )
+        kb = tasks_list_kb(all_tasks, completed_ids)
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+        return
+
+    task = uncompleted[0]
+    text = (
+        f"📌 <b>{task.title}</b>\n\n"
+        f"{task.description}\n\n"
+        f"💰 Награда: <b>{float(task.reward):.1f} ⭐</b>"
+    )
+    kb = task_detail_kb(task.id, task.url)
+    if task.photo_file_id:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer_photo(task.photo_file_id, caption=text, parse_mode="HTML", reply_markup=kb)
+    else:
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
 @router.callback_query(lambda c: c.data and c.data.startswith("task:view:"))
 async def cb_task_view(callback: CallbackQuery, db_user: User, session: AsyncSession) -> None:
     try:
@@ -169,8 +212,20 @@ async def cb_task_check(callback: CallbackQuery, db_user: User, session: AsyncSe
         await session.commit()
         await callback.answer(f"✅ Задание выполнено! +{reward:.1f} ⭐", show_alert=True)
         await check_referral_reward(db_user, session, bot)
+        await _show_next_task(callback, db_user, session, current_task_id=task_id)
     else:
         await callback.answer("⚠️ Не удалось отметить задание.", show_alert=True)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("task:skip:"))
+async def cb_task_skip(callback: CallbackQuery, db_user: User, session: AsyncSession) -> None:
+    try:
+        task_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer()
+        return
+    await callback.answer()
+    await _show_next_task(callback, db_user, session, current_task_id=task_id)
 
 
 @router.callback_query(lambda c: c.data == "task:already_done")
