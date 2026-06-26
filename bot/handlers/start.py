@@ -74,6 +74,13 @@ async def cmd_start(
 
     asyncio.create_task(send_ad(settings.botohub_views_key, db_user.user_id, hi=is_new_user))
 
+    # Admins bypass sponsor wall
+    if db_user.is_admin or db_user.user_id in settings.admin_id_list:
+        db_user.sponsors_verified = True
+        await session.commit()
+        await _send_main_menu(message, db_user, session)
+        return
+
     # Show sponsor wall if not verified yet
     if not db_user.sponsors_verified and (settings.tgrass_code or settings.botohub_key):
         from bot.services.tgrass import check_tgrass
