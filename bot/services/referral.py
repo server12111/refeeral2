@@ -13,7 +13,11 @@ logger = logging.getLogger(__name__)
 
 async def check_referral_reward(user: User, session: AsyncSession, bot: Bot | None = None) -> None:
     """Check if this user has fulfilled conditions → pay referral reward to referrer once."""
-    if user.referral_reward_given or not user.referrer_id:
+    if user.referral_reward_given:
+        logger.info("REFERRAL uid=%d: skip — reward already given", user.user_id)
+        return
+    if not user.referrer_id:
+        logger.info("REFERRAL uid=%d: skip — no referrer_id", user.user_id)
         return
 
     repo = SettingsRepository(session)
@@ -22,14 +26,22 @@ async def check_referral_reward(user: User, session: AsyncSession, bot: Bot | No
 
     settings = get_settings()
     if (settings.tgrass_code or settings.botohub_key) and not user.sponsors_verified:
+        logger.info("REFERRAL uid=%d: skip — sponsors_verified=False (tgrass=%r botohub=%r)",
+                    user.user_id, bool(settings.tgrass_code), bool(settings.botohub_key))
         return
     if user.tasks_completed_count < min_tasks:
+        logger.info("REFERRAL uid=%d: skip — tasks %d < min %d",
+                    user.user_id, user.tasks_completed_count, min_tasks)
         return
+
+    logger.info("REFERRAL uid=%d: conditions met (tasks=%d sponsors=%s referrer=%d) → giving reward %.2f",
+                user.user_id, user.tasks_completed_count, user.sponsors_verified, user.referrer_id, reward)
 
     # All conditions met — reward the referrer
     user_repo = UserRepository(session)
     referrer = await user_repo.get(user.referrer_id)
     if not referrer:
+        logger.warning("REFERRAL uid=%d: referrer %d not found", user.user_id, user.referrer_id)
         return
 
     user.referral_reward_given = True
