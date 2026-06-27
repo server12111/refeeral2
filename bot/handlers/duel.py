@@ -42,7 +42,7 @@ async def _expire_waiting_duel(duel_id: int, creator_id: int, amount: float, bot
             return
         creator = await session.get(User, creator_id)
         if creator:
-            creator.stars_balance += amount
+            creator.stars_balance = round(float(creator.stars_balance) + amount, 2)
         duel.status = "cancelled"
         await session.commit()
     await _notify(bot, creator_id,
@@ -122,7 +122,7 @@ async def _resolve_duel(duel: Duel, session: AsyncSession, bot: Bot) -> None:
     loser_id = duel.joiner_id if c_roll > j_roll else duel.creator_id
     winner = await session.get(User, winner_id)
     winner_name = winner.first_name if winner else "Игрок"
-    if winner: winner.stars_balance += winner_amount
+    if winner: winner.stars_balance = round(float(winner.stars_balance) + winner_amount, 2)
     duel.winner_id = winner_id
     await session.commit()
 
@@ -174,7 +174,7 @@ async def msg_duel_amount(message: Message, state: FSMContext, session: AsyncSes
         return
 
     await state.clear()
-    db_user.stars_balance -= amount
+    db_user.stars_balance = round(float(db_user.stars_balance) - amount, 2)
     expires_at = datetime.utcnow() + timedelta(minutes=DUEL_EXPIRE_MINUTES)
     duel = Duel(creator_id=db_user.user_id, amount=amount, expires_at=expires_at)
     session.add(duel)

@@ -17,16 +17,23 @@ async def cb_earn(callback: CallbackQuery, db_user: User, session: AsyncSession)
     template = await repo.get_text("earn")
     ref_link = f"https://t.me/{settings.bot_username}?start=ref_{db_user.user_id}"
 
-    text = template.format(
-        referrals=db_user.referrals_count,
-        link=ref_link,
-        balance=float(db_user.stars_balance),
-    ) if "{" in template else (
+    _default_text = (
         f"💸 <b>Заработать</b>\n\n"
         f"Приглашай друзей по реферальной ссылке!\n\n"
         f"👥 Приглашено: <b>{db_user.referrals_count}</b>\n"
         f"🔗 Твоя ссылка:\n<code>{ref_link}</code>"
     )
+    if "{" in template:
+        try:
+            text = template.format(
+                referrals=db_user.referrals_count,
+                link=ref_link,
+                balance=float(db_user.stars_balance),
+            )
+        except (KeyError, ValueError, IndexError):
+            text = _default_text
+    else:
+        text = _default_text
 
     photo = await repo.get_photo("earn")
     kb = earn_kb(settings.bot_username, db_user.user_id)
