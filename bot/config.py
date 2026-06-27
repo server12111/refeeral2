@@ -1,5 +1,8 @@
 from functools import lru_cache
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
@@ -7,7 +10,7 @@ class Settings(BaseSettings):
 
     bot_token: str
     admin_ids: str = ""
-    database_url: str = "sqlite+aiosqlite:///bot.db"
+    database_url: str = f"sqlite+aiosqlite:///{_PROJECT_ROOT / 'bot.db'}"
 
     admin_channel_id: str = ""
     payments_channel_id: str = ""
