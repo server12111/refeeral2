@@ -80,7 +80,8 @@ async def cb_cases_confirm(callback: CallbackQuery, session: AsyncSession, bot: 
     await session.commit()
 
     s_repo = SettingsRepository(session)
-    video_file_id = await s_repo.get(f"case_{tier}_video")
+    prize_str = str(payout).replace(".", "_")
+    video_file_id = await s_repo.get(f"case_video_{prize_str}")
 
     name = _TIER_NAMES[tier]
     net = round(payout - bet, 2)

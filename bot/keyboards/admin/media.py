@@ -13,13 +13,17 @@ KEY_LABELS = {
     "top": "🏆 Топ",
 }
 
-VIDEO_LABELS = {
-    "case_1_video": "🥉 Кейс Бронза",
-    "case_3_video": "🥈 Кейс Серебро",
-    "case_5_video": "🥇 Кейс Золото",
-    "wheel_video_50x": "🎰 Колесо: Джекпот (50x)",
-    "wheel_video_01x": "🎰 Колесо: Проигрыш (0.1x)",
+_CASE_PRIZES_ALL = sorted({
+    0.1, 0.3, 0.5, 0.7, 0.9, 1.0, 1.2, 1.4, 1.5, 1.6, 1.8,
+    2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 6.5, 7.0, 7.5, 8.0, 9.0,
+})
+
+VIDEO_LABELS: dict[str, str] = {
+    f"case_video_{str(p).replace('.', '_')}": f"🎁 Приз {p} ⭐"
+    for p in _CASE_PRIZES_ALL
 }
+VIDEO_LABELS["wheel_video_50x"] = "🎰 Колесо: Джекпот (50x)"
+VIDEO_LABELS["wheel_video_01x"] = "🎰 Колесо: Проигрыш (0.1x)"
 
 
 def media_list_kb() -> InlineKeyboardMarkup:
@@ -33,8 +37,18 @@ def media_list_kb() -> InlineKeyboardMarkup:
 
 def video_list_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    for key, label in VIDEO_LABELS.items():
-        builder.row(InlineKeyboardButton(text=label, callback_data=f"admin:video_upload:{key}"))
+    prize_keys = [k for k in VIDEO_LABELS if k.startswith("case_video_")]
+    wheel_keys = [k for k in VIDEO_LABELS if k.startswith("wheel_")]
+    # Prize buttons in pairs
+    for i in range(0, len(prize_keys), 2):
+        row = [
+            InlineKeyboardButton(text=VIDEO_LABELS[k], callback_data=f"admin:video_upload:{k}")
+            for k in prize_keys[i:i+2]
+        ]
+        builder.row(*row)
+    # Wheel buttons
+    for k in wheel_keys:
+        builder.row(InlineKeyboardButton(text=VIDEO_LABELS[k], callback_data=f"admin:video_upload:{k}"))
     builder.row(InlineKeyboardButton(text="◀️ Назад", callback_data="admin:media"))
     return builder.as_markup()
 
