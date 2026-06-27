@@ -217,9 +217,8 @@ async def cb_sponsor_check(
         cooldown = 900  # 15 минут
 
         if last_shown > 0 and (now - last_shown) < cooldown:
-            wait_min = max(1, (cooldown - (now - last_shown)) // 60)
             await callback.answer(
-                f"⏳ Следующие каналы будут доступны через {wait_min} мин.",
+                "❌ Вы ещё не подписались на все каналы. Попробуйте позже.",
                 show_alert=True,
             )
             return
@@ -239,11 +238,10 @@ async def cb_sponsor_check(
             builder.row(*btns[i:i+2])
         builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="sponsor_check"))
 
-        progress = f" (ещё {total_left - len(shown)} после)" if total_left > len(shown) else ""
         text = (
-            f"📢 <b>Подписка на спонсоров</b>\n\n"
-            f"Осталось каналов: <b>{total_left}</b>{progress}.\n\n"
-            "Подпишитесь на каналы ниже и нажмите <b>«Я подписался»</b>."
+            "📢 <b>Подписка на спонсоров</b>\n\n"
+            "Для использования бота необходимо подписаться на все каналы ниже.\n\n"
+            "После подписки нажми <b>«Я подписался»</b>."
         )
         try:
             await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())

@@ -131,12 +131,10 @@ class SponsorWallMiddleware(BaseMiddleware):
             builder.row(*btns[i:i+2])
         builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="sponsor_check"))
 
-        total_left = len(unsubscribed)
-        progress = f" (ещё {total_left - len(shown)} после)" if total_left > len(shown) else ""
         text = (
-            f"📢 <b>Подписка на спонсоров</b>\n\n"
-            f"Осталось каналов: <b>{total_left}</b>{progress}.\n\n"
-            "Подпишитесь на каналы ниже и нажмите <b>«Я подписался»</b>."
+            "📢 <b>Подписка на спонсоров</b>\n\n"
+            "Для использования бота необходимо подписаться на все каналы ниже.\n\n"
+            "После подписки нажми <b>«Я подписался»</b>."
         )
 
         if isinstance(inner, Message):
