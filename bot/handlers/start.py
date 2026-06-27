@@ -108,19 +108,25 @@ async def cmd_start(
 
             from aiogram.utils.keyboard import InlineKeyboardBuilder
             from aiogram.types import InlineKeyboardButton
+            s_repo = SettingsRepository(session)
+            max_ch = await s_repo.get_int("sponsor_max_channels", 10)
+            total_left = len(unsubscribed)
+            shown = unsubscribed[:max_ch] if max_ch > 0 else unsubscribed
+
             builder = InlineKeyboardBuilder()
             btns = [
                 InlineKeyboardButton(text="📢 Подписаться", url=ch.get("url", ""))
-                for ch in unsubscribed if ch.get("url")
+                for ch in shown if ch.get("url")
             ]
             for i in range(0, len(btns), 2):
                 builder.row(*btns[i:i+2])
             builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="sponsor_check"))
 
+            progress = f" (шаг {len(shown)} из {total_left})" if total_left > len(shown) else ""
             await message.answer(
                 f"📢 <b>Подписка на спонсоров</b>\n\n"
-                f"Осталось подписаться: <b>{len(unsubscribed)} канала(-ов)</b>.\n\n"
-                "Подпишитесь на все каналы ниже и нажмите <b>«Я подписался»</b>.",
+                f"Осталось каналов: <b>{total_left}</b>{progress}.\n\n"
+                "Подпишитесь на каналы ниже и нажмите <b>«Я подписался»</b>.",
                 parse_mode="HTML",
                 reply_markup=builder.as_markup(),
             )
@@ -199,21 +205,26 @@ async def cb_sponsor_check(
 
     if unsubscribed:
         # Show remaining channels instead of just an error toast
-        # Show ALL remaining channels at once so user can subscribe in one go
+        from bot.database.repositories.settings import SettingsRepository
+        s_repo = SettingsRepository(session)
+        max_ch = await s_repo.get_int("sponsor_max_channels", 10)
         total_left = len(unsubscribed)
+        shown = unsubscribed[:max_ch] if max_ch > 0 else unsubscribed
+
         builder = InlineKeyboardBuilder()
         btns = [
             InlineKeyboardButton(text="📢 Подписаться", url=ch.get("url", ""))
-            for ch in unsubscribed if ch.get("url")
+            for ch in shown if ch.get("url")
         ]
         for i in range(0, len(btns), 2):
             builder.row(*btns[i:i+2])
         builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="sponsor_check"))
 
+        progress = f" (шаг {len(shown)} из {total_left})" if total_left > len(shown) else ""
         text = (
             f"📢 <b>Подписка на спонсоров</b>\n\n"
-            f"Осталось подписаться: <b>{total_left} канала(-ов)</b>.\n\n"
-            "Подпишитесь на все каналы ниже и нажмите <b>«Я подписался»</b>."
+            f"Осталось каналов: <b>{total_left}</b>{progress}.\n\n"
+            "Подпишитесь на каналы ниже и нажмите <b>«Я подписался»</b>."
         )
         try:
             await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())

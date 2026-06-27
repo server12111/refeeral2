@@ -109,21 +109,30 @@ class SponsorWallMiddleware(BaseMiddleware):
                     await notify_user_sponsors_verified(db_user, session, bot)
             return await handler(event, data)
 
-        # Show ALL unsubscribed channels at once so user can subscribe in one go
+        # Limit shown channels — BotoHub first, TGrass fills remainder
+        s_repo = SettingsRepository(session)
+        max_ch = await s_repo.get_int("sponsor_max_channels", 10)
+        if max_ch > 0:
+            tgrass_slots = max(0, max_ch - len(botohub_list))
+            shown = (botohub_list[:max_ch] + tgrass_list[:tgrass_slots])[:max_ch]
+        else:
+            shown = unsubscribed
+
         builder = InlineKeyboardBuilder()
         btns = [
             InlineKeyboardButton(text="📢 Подписаться", url=ch.get("url", ""))
-            for ch in unsubscribed if ch.get("url")
+            for ch in shown if ch.get("url")
         ]
         for i in range(0, len(btns), 2):
             builder.row(*btns[i:i+2])
         builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="sponsor_check"))
 
         total_left = len(unsubscribed)
+        progress = f" (шаг {len(shown)} из {total_left})" if total_left > len(shown) else ""
         text = (
             f"📢 <b>Подписка на спонсоров</b>\n\n"
-            f"Осталось подписаться: <b>{total_left} канала(-ов)</b>.\n\n"
-            "Подпишитесь на все каналы ниже и нажмите <b>«Я подписался»</b>."
+            f"Осталось каналов: <b>{total_left}</b>{progress}.\n\n"
+            "Подпишитесь на каналы ниже и нажмите <b>«Я подписался»</b>."
         )
 
         if isinstance(inner, Message):
