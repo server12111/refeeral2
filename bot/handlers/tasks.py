@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import get_settings
 from bot.database.models import User
+from bot.database.repositories.content import ContentRepository
 from bot.database.repositories.settings import SettingsRepository
 from bot.database.repositories.task import TaskRepository
 from bot.keyboards.tasks import tasks_list_kb, task_detail_kb, pf_task_detail_kb
@@ -89,10 +90,18 @@ async def cb_tasks_menu(callback: CallbackQuery, db_user: User, session: AsyncSe
         return
 
     kb = tasks_list_kb(custom_tasks, completed_ids)
-    try:
-        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-    except Exception:
-        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    photo = await ContentRepository(session).get_photo("tasks")
+    if photo:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer_photo(photo, caption=text, parse_mode="HTML", reply_markup=kb)
+    else:
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
 

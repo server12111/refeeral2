@@ -79,11 +79,8 @@ async def cb_cases_confirm(callback: CallbackQuery, session: AsyncSession, bot: 
     await update_casino_profit(session, f"case_{tier}", bet, payout)
     await session.commit()
 
-    # Load video — per-prize key like case_1_video_3_5 (for 3.5 ⭐)
     s_repo = SettingsRepository(session)
-    prize_str = str(payout).replace(".", "_")
-    video_key = f"case_{tier}_video_{prize_str}"
-    video_file_id = await s_repo.get(video_key)
+    video_file_id = await s_repo.get(f"case_{tier}_video")
 
     name = _TIER_NAMES[tier]
     net = round(payout - bet, 2)

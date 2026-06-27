@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.models import User, GameSession
+from bot.database.repositories.content import ContentRepository
 from bot.database.repositories.settings import SettingsRepository
 from bot.database.repositories.game import GameRepository
 from bot.keyboards.games import (
@@ -124,7 +125,7 @@ async def _execute_game(
             won, payout = True, round(bet * c_bounce, 2)
 
     if won:
-        db_user.stars_balance += payout
+        db_user.stars_balance = round(float(db_user.stars_balance) + payout, 2)
 
     session.add(GameSession(
         user_id=db_user.user_id, game_type=game_type,
@@ -197,10 +198,20 @@ async def cb_games_menu(callback: CallbackQuery, session: AsyncSession, db_user:
     else:
         text = f"🎮 <b>Игры</b>\n\nБаланс: <b>{float(db_user.stars_balance):.2f} ⭐</b>\n\nВыбери игру:"
 
-    try:
-        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=games_menu_kb(configs))
-    except Exception:
-        await callback.message.answer(text, parse_mode="HTML", reply_markup=games_menu_kb(configs))
+    c_repo = ContentRepository(session)
+    photo = await c_repo.get_photo("games")
+    kb = games_menu_kb(configs)
+    if photo:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer_photo(photo, caption=text, parse_mode="HTML", reply_markup=kb)
+    else:
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
 
@@ -278,7 +289,7 @@ async def msg_bet_enter(message: Message, session: AsyncSession, db_user: User, 
         await message.answer(f"❌ Недостаточно звёзд. Баланс: <b>{float(db_user.stars_balance):.2f} ⭐</b>", parse_mode="HTML", reply_markup=game_cancel_kb())
         return
 
-    db_user.stars_balance -= bet
+    db_user.stars_balance = round(float(db_user.stars_balance) - bet, 2)
     await session.commit()
 
     side_states = {
@@ -315,7 +326,7 @@ async def msg_bet_enter(message: Message, session: AsyncSession, db_user: User, 
             message.bot, message.chat.id, session, db_user, game_type, bet,
         )
     except Exception:
-        db_user.stars_balance += bet
+        db_user.stars_balance = round(float(db_user.stars_balance) + bet, 2)
         await session.commit()
         await message.answer("⚠️ Ошибка игры. Ставка возвращена.", reply_markup=game_cancel_kb())
         return
@@ -338,7 +349,7 @@ def _make_side_handler(game_type: str, state_cls):
                 callback.bot, callback.message.chat.id, session, db_user, game_type, bet, side,
             )
         except Exception:
-            db_user.stars_balance += bet
+            db_user.stars_balance = round(float(db_user.stars_balance) + bet, 2)
             await session.commit()
             await callback.message.answer("⚠️ Ошибка игры. Ставка возвращена.", reply_markup=game_cancel_kb())
             await callback.answer()

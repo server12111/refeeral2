@@ -47,7 +47,7 @@ async def check_sponsors(api_key: str, user_id: int, links: list[str]) -> bool:
                 data = await resp.json(content_type=None)
                 sponsors = data.get("sponsors", [])
                 if not sponsors:
-                    return False
+                    return True  # API не знает об этом канале — считаем подписанным
                 return all(s.get("status") == "subscribed" for s in sponsors)
     except Exception as e:
         logger.warning("PiarFlow check_sponsors error: %s", e)

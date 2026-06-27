@@ -5,7 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.models import User
 from bot.database.repositories.content import ContentRepository, CONTENT_KEYS
-from bot.keyboards.admin.media import media_list_kb, media_edit_kb as media_item_kb, media_cancel_kb
+from bot.database.repositories.settings import SettingsRepository
+from bot.keyboards.admin.media import (
+    media_list_kb, media_edit_kb as media_item_kb, media_cancel_kb,
+    video_list_kb, VIDEO_LABELS,
+)
 from bot.keyboards.admin.main import back_to_admin_kb
 from bot.states.admin import AdminMediaStates
 from bot.handlers.admin.stats import _is_admin
@@ -106,5 +110,57 @@ async def msg_media_photo(message: Message, state: FSMContext, session: AsyncSes
     file_id = message.photo[-1].file_id
     await repo.set_photo(key, file_id)
     await message.answer(f"✅ Фото для <b>{CONTENT_KEYS.get(key, key)}</b> обновлено.", parse_mode="HTML", reply_markup=back_to_admin_kb())
+
+
+# ── Video upload ────────────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "admin:video_list")
+async def cb_video_list(callback: CallbackQuery, db_user: User) -> None:
+    if not _is_admin(db_user): return
+    text = "🎬 <b>Видео</b>\n\nВыбери, для какого раздела загрузить видео:"
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=video_list_kb())
+    except Exception:
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=video_list_kb())
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("admin:video_upload:"))
+async def cb_video_upload(callback: CallbackQuery, db_user: User, state: FSMContext) -> None:
+    if not _is_admin(db_user): return
+    key = callback.data[len("admin:video_upload:"):]
+    if key not in VIDEO_LABELS:
+        await callback.answer("❓ Неизвестный ключ.", show_alert=True)
+        return
+    await state.set_state(AdminMediaStates.enter_video)
+    await state.update_data(video_key=key)
+    await callback.message.answer(
+        f"🎬 Отправь видео для раздела <b>{VIDEO_LABELS[key]}</b>.\n\nИли '-' чтобы удалить текущее.",
+        parse_mode="HTML",
+        reply_markup=media_cancel_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(AdminMediaStates.enter_video)
+async def msg_media_video(message: Message, state: FSMContext, session: AsyncSession, db_user: User) -> None:
+    if not _is_admin(db_user): return
+    data = await state.get_data()
+    key = data["video_key"]
+    await state.clear()
+    repo = SettingsRepository(session)
+
+    if message.text and message.text.strip() == "-":
+        await repo.set(key, "")
+        await message.answer(f"✅ Видео для <b>{VIDEO_LABELS.get(key, key)}</b> удалено.", parse_mode="HTML", reply_markup=back_to_admin_kb())
+        return
+
+    if not message.video:
+        await message.answer("❌ Отправь видео-файл или '-' для удаления.", reply_markup=media_cancel_kb())
+        return
+
+    file_id = message.video.file_id
+    await repo.set(key, file_id)
+    await message.answer(f"✅ Видео для <b>{VIDEO_LABELS.get(key, key)}</b> обновлено.", parse_mode="HTML", reply_markup=back_to_admin_kb())
 
 

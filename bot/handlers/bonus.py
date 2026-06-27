@@ -8,6 +8,7 @@ from aiogram.types import InlineKeyboardButton
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.models import User
+from bot.database.repositories.content import ContentRepository
 from bot.database.repositories.settings import SettingsRepository
 from bot.keyboards.main import back_to_menu_kb
 
@@ -56,8 +57,17 @@ async def cb_bonus(callback: CallbackQuery, db_user: User, session: AsyncSession
         f"Возвращайтесь завтра за новым бонусом!"
     )
 
-    try:
-        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
-    except Exception:
-        await callback.message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
+    kb = builder.as_markup()
+    photo = await ContentRepository(session).get_photo("bonus")
+    if photo:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer_photo(photo, caption=text, parse_mode="HTML", reply_markup=kb)
+    else:
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()

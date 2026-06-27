@@ -3,6 +3,7 @@ from aiogram.types import CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.models import User
+from bot.database.repositories.content import ContentRepository
 from bot.database.repositories.user import UserRepository
 from bot.keyboards.top import top_menu_kb
 
@@ -22,12 +23,21 @@ def _format_top(users: list, field: str, title: str, label: str) -> str:
 
 
 @router.callback_query(lambda c: c.data == "menu:top")
-async def cb_top_menu(callback: CallbackQuery, db_user: User) -> None:
+async def cb_top_menu(callback: CallbackQuery, db_user: User, session: AsyncSession) -> None:
     text = "🏆 <b>Топ игроков</b>\n\nВыбери рейтинг:"
-    try:
-        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=top_menu_kb())
-    except Exception:
-        await callback.message.answer(text, parse_mode="HTML", reply_markup=top_menu_kb())
+    photo = await ContentRepository(session).get_photo("top")
+    kb = top_menu_kb()
+    if photo:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer_photo(photo, caption=text, parse_mode="HTML", reply_markup=kb)
+    else:
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
 

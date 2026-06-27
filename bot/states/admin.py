@@ -36,6 +36,7 @@ class AdminSettingsStates(StatesGroup):
 class AdminMediaStates(StatesGroup):
     enter_text = State()
     enter_photo = State()
+    enter_video = State()
 
 
 class AdminGameStates(StatesGroup):

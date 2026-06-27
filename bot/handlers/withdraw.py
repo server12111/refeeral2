@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import get_settings
 from bot.database.models import User
+from bot.database.repositories.content import ContentRepository
 from bot.database.repositories.settings import SettingsRepository
 from bot.database.repositories.withdrawal import WithdrawalRepository
 from bot.keyboards.withdraw import (
@@ -60,10 +61,19 @@ async def cb_withdraw_menu(callback: CallbackQuery, db_user: User, session: Asyn
         f"💰 Твой баланс: <b>{float(db_user.stars_balance):.2f} ⭐</b>\n\n"
         f"Выбери сумму для вывода:"
     )
-    try:
-        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=withdraw_amounts_kb(amounts))
-    except Exception:
-        await callback.message.answer(text, parse_mode="HTML", reply_markup=withdraw_amounts_kb(amounts))
+    photo = await ContentRepository(session).get_photo("withdraw")
+    kb = withdraw_amounts_kb(amounts)
+    if photo:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer_photo(photo, caption=text, parse_mode="HTML", reply_markup=kb)
+    else:
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
 
