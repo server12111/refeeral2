@@ -101,12 +101,13 @@ class SponsorWallMiddleware(BaseMiddleware):
             logger.info("WALL uid=%s all-subscribed → verify", uid)
             db_user.sponsors_verified = True
             await session.commit()
-            from bot.services.referral import check_referral_reward, notify_user_sponsors_verified
+            from bot.services.referral import check_referral_reward, notify_user_sponsors_verified, notify_referrer_sponsors_verified
             await check_referral_reward(db_user, session, data.get("bot"))
             if not db_user.referral_reward_given:
                 bot = data.get("bot")
                 if bot:
                     await notify_user_sponsors_verified(db_user, session, bot)
+                    await notify_referrer_sponsors_verified(db_user, session, bot)
             return await handler(event, data)
 
         # Limit shown channels — BotoHub first, TGrass fills remainder
@@ -129,7 +130,7 @@ class SponsorWallMiddleware(BaseMiddleware):
         ]
         for i in range(0, len(btns), 2):
             builder.row(*btns[i:i+2])
-        builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="sponsor_check"))
+        builder.row(InlineKeyboardButton(text="✅ Я подписался на все каналы", callback_data="sponsor_check"))
 
         text = (
             "📢 <b>Подписка на спонсоров</b>\n\n"

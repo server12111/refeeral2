@@ -275,15 +275,23 @@ async def cb_pf_task_check(callback: CallbackQuery, db_user: User, session: Asyn
         await callback.answer("Сервис недоступен.", show_alert=True)
         return
 
+    # Acknowledge immediately so Telegram dismisses the spinner
+    await callback.answer()
+
     s_repo = SettingsRepository(session)
     max_sponsors = await s_repo.get_int("piarflow_max_sponsors", 100)
     tasks_reward = await s_repo.get_float("tasks_reward", 0.3)
 
     key = f"pf_done:{db_user.user_id}:{link_prefix[:30]}"
     if await s_repo.get(key, "") == "1":
-        await callback.answer("✅ Задание уже выполнено!", show_alert=True)
         await _show_pf_task(callback, db_user, session)
         return
+
+    # Show loading state while API calls run
+    try:
+        await callback.message.edit_text("⏳ Проверяем подписку...", parse_mode="HTML")
+    except Exception:
+        pass
 
     pf_tasks = await get_sponsors(settings.piarflow_key, db_user.user_id, _pf_chat_id(), max_sponsors)
 
@@ -299,10 +307,14 @@ async def cb_pf_task_check(callback: CallbackQuery, db_user: User, session: Asyn
         full_link = sponsor.get("link", "")
         subscribed = await check_sponsors(settings.piarflow_key, db_user.user_id, [full_link])
         if not subscribed:
-            await callback.answer(
-                "❌ Вы не подписаны на канал. Подпишитесь и попробуйте ещё раз.",
-                show_alert=True,
-            )
+            try:
+                await callback.message.edit_text(
+                    "❌ Вы не подписаны на канал. Подпишитесь и нажмите «Проверить».",
+                    parse_mode="HTML",
+                    reply_markup=pf_task_detail_kb(full_link),
+                )
+            except Exception:
+                pass
             return
     # else: task absent from PF list → user already subscribed (PF removed it)
 
@@ -310,6 +322,5 @@ async def cb_pf_task_check(callback: CallbackQuery, db_user: User, session: Asyn
     db_user.stars_balance = round(float(db_user.stars_balance) + tasks_reward, 2)
     db_user.tasks_completed_count += 1
     await session.commit()
-    await callback.answer(f"✅ Задание выполнено! +{tasks_reward:.1f} ⭐", show_alert=True)
     await check_referral_reward(db_user, session, bot)
     await _show_pf_task(callback, db_user, session)

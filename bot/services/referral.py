@@ -86,6 +86,28 @@ async def notify_user_sponsors_verified(user: User, session: AsyncSession, bot: 
         logger.warning("Failed to notify user %s sponsors passed: %s", user.user_id, e)
 
 
+async def notify_referrer_sponsors_verified(user: User, session: AsyncSession, bot: Bot) -> None:
+    """Notify referrer that their referred user passed the sponsor wall."""
+    if not user.referrer_id or user.referral_reward_given:
+        return
+    repo = SettingsRepository(session)
+    min_tasks = await repo.get_int("min_tasks_for_referral", 3)
+    remaining = max(0, min_tasks - user.tasks_completed_count)
+    if remaining <= 0:
+        return
+    username_display = f"@{user.username}" if user.username else user.first_name
+    word = "задание" if remaining == 1 else "задания" if remaining in (2, 3, 4) else "заданий"
+    try:
+        await bot.send_message(
+            user.referrer_id,
+            f"✅ <b>{username_display} подписался на спонсоров!</b>\n\n"
+            f"Осталось выполнить <b>{remaining} {word}</b> для получения награды.",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("Failed to notify referrer %s sponsors passed: %s", user.referrer_id, e)
+
+
 async def notify_referrer_joined(referrer_id: int, new_user: User, session: AsyncSession, bot: Bot) -> None:
     """Notify referrer that someone joined via their link."""
     settings = get_settings()

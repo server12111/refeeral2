@@ -16,7 +16,7 @@ from bot.database.repositories.user import UserRepository
 from bot.keyboards.main import main_menu_kb
 from bot.services.adv import send_ad
 from bot.services.captcha import generate_fruit_captcha
-from bot.services.referral import notify_referrer_joined, check_referral_reward, notify_user_sponsors_verified
+from bot.services.referral import notify_referrer_joined, check_referral_reward, notify_user_sponsors_verified, notify_referrer_sponsors_verified
 from bot.states.captcha import CaptchaStates
 
 router = Router()
@@ -98,22 +98,11 @@ async def cmd_start(
         unsubscribed = botohub_list + tgrass_list
 
         if unsubscribed:
-            s_repo = SettingsRepository(session)
-            max_ch = await s_repo.get_int("sponsor_max_channels", 3)
-            if max_ch > 0:
-                tgrass_slots = max(0, max_ch - len(botohub_list))
-                shown = (botohub_list[:max_ch] + tgrass_list[:tgrass_slots])[:max_ch]
-            else:
-                shown = unsubscribed
-
-            from aiogram.utils.keyboard import InlineKeyboardBuilder
-            from aiogram.types import InlineKeyboardButton
             import time as _time
-            s_repo = SettingsRepository(session)
+            from bot.database.repositories.settings import SettingsRepository as _SR
+            s_repo = _SR(session)
             max_ch = await s_repo.get_int("sponsor_max_channels", 10)
-            total_left = len(unsubscribed)
             shown = unsubscribed[:max_ch] if max_ch > 0 else unsubscribed
-            # Record timestamp for 15-min cooldown between batches
             await s_repo.set(f"sw:{db_user.user_id}", str(int(_time.time())))
 
             builder = InlineKeyboardBuilder()
@@ -123,13 +112,12 @@ async def cmd_start(
             ]
             for i in range(0, len(btns), 2):
                 builder.row(*btns[i:i+2])
-            builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="sponsor_check"))
+            builder.row(InlineKeyboardButton(text="✅ Я подписался на все каналы", callback_data="sponsor_check"))
 
-            progress = f" (ещё {total_left - len(shown)} после)" if total_left > len(shown) else ""
             await message.answer(
-                f"📢 <b>Подписка на спонсоров</b>\n\n"
-                f"Осталось каналов: <b>{total_left}</b>{progress}.\n\n"
-                "Подпишитесь на каналы ниже и нажмите <b>«Я подписался»</b>.",
+                "📢 <b>Подписка на спонсоров</b>\n\n"
+                "Для использования бота необходимо подписаться на все каналы ниже.\n\n"
+                "После подписки нажми <b>«Я подписался»</b>.",
                 parse_mode="HTML",
                 reply_markup=builder.as_markup(),
             )
@@ -177,6 +165,7 @@ async def cb_sponsor_check(
         await check_referral_reward(db_user, session, bot)
         if not db_user.referral_reward_given:
             await notify_user_sponsors_verified(db_user, session, bot)
+            await notify_referrer_sponsors_verified(db_user, session, bot)
         repo = ContentRepository(session)
         text = await repo.get_text("welcome")
         photo = await repo.get_photo("welcome")
@@ -236,7 +225,7 @@ async def cb_sponsor_check(
         ]
         for i in range(0, len(btns), 2):
             builder.row(*btns[i:i+2])
-        builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="sponsor_check"))
+        builder.row(InlineKeyboardButton(text="✅ Я подписался на все каналы", callback_data="sponsor_check"))
 
         text = (
             "📢 <b>Подписка на спонсоров</b>\n\n"
@@ -303,6 +292,7 @@ async def cb_captcha_pick(
     await check_referral_reward(db_user, session, bot)
     if not db_user.referral_reward_given:
         await notify_user_sponsors_verified(db_user, session, bot)
+        await notify_referrer_sponsors_verified(db_user, session, bot)
 
     repo = ContentRepository(session)
     text = await repo.get_text("welcome")
