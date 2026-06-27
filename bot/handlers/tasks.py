@@ -67,13 +67,7 @@ async def cb_tasks_menu(callback: CallbackQuery, db_user: User, session: AsyncSe
         f"✅ Выполнено: <b>{db_user.tasks_completed_count}</b>"
     )
 
-    # If there are uncompleted PiarFlow tasks — show the first one immediately
-    if pf_uncompleted > 0:
-        await callback.answer()
-        await _show_pf_task(callback, db_user, session)
-        return
-
-    if not custom_tasks:
+    if not custom_tasks and pf_uncompleted == 0:
         builder = InlineKeyboardBuilder()
         builder.row(InlineKeyboardButton(text="🔄 Обновить", callback_data="menu:tasks"))
         builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main"))
@@ -92,7 +86,7 @@ async def cb_tasks_menu(callback: CallbackQuery, db_user: User, session: AsyncSe
         await callback.answer()
         return
 
-    kb = tasks_list_kb(custom_tasks, completed_ids)
+    kb = tasks_list_kb(custom_tasks, completed_ids, pf_uncompleted)
     photo = await ContentRepository(session).get_photo("tasks")
     if photo:
         try:

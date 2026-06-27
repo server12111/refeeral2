@@ -120,17 +120,19 @@ class SponsorWallMiddleware(BaseMiddleware):
 
         builder = InlineKeyboardBuilder()
         btns = [
-            InlineKeyboardButton(text="Подписаться", url=ch.get("url", ""), style="primary")
+            InlineKeyboardButton(text="📢 Подписаться", url=ch.get("url", ""))
             for ch in shown if ch.get("url")
         ]
         for i in range(0, len(btns), 2):
             builder.row(*btns[i:i+2])
-        builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="sponsor_check", style="success"))
+        builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="sponsor_check"))
 
+        total_left = len(unsubscribed)
+        more_note = f" (показано {len(shown)} из {total_left})" if total_left > len(shown) else ""
         text = (
-            "📢 <b>Подписка на спонсоров</b>\n\n"
-            "Для использования бота необходимо подписаться на все каналы ниже.\n\n"
-            "После подписки нажми <b>«Я подписался»</b>."
+            f"📢 <b>Подписка на спонсоров</b>\n\n"
+            f"Осталось подписаться: <b>{total_left} канала(-ов)</b>{more_note}.\n\n"
+            "Подпишитесь на все каналы ниже и нажмите <b>«Я подписался»</b>."
         )
 
         if isinstance(inner, Message):

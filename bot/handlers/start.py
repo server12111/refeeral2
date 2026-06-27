@@ -110,17 +110,19 @@ async def cmd_start(
             from aiogram.types import InlineKeyboardButton
             builder = InlineKeyboardBuilder()
             btns = [
-                InlineKeyboardButton(text="Подписаться", url=ch.get("url", ""), style="primary")
+                InlineKeyboardButton(text="📢 Подписаться", url=ch.get("url", ""))
                 for ch in shown if ch.get("url")
             ]
             for i in range(0, len(btns), 2):
                 builder.row(*btns[i:i+2])
-            builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="sponsor_check", style="success"))
+            builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="sponsor_check"))
 
+            total_left = len(unsubscribed)
+            more_note = f" (показано {len(shown)} из {total_left})" if total_left > len(shown) else ""
             await message.answer(
-                "📢 <b>Подписка на спонсоров</b>\n\n"
-                "Для использования бота необходимо подписаться на все каналы ниже.\n\n"
-                "После подписки нажми <b>«Я подписался»</b>.",
+                f"📢 <b>Подписка на спонсоров</b>\n\n"
+                f"Осталось подписаться: <b>{total_left} канала(-ов)</b>{more_note}.\n\n"
+                "Подпишитесь на все каналы ниже и нажмите <b>«Я подписался»</b>.",
                 parse_mode="HTML",
                 reply_markup=builder.as_markup(),
             )
@@ -198,7 +200,33 @@ async def cb_sponsor_check(
         unsubscribed.extend(botohub_result)
 
     if unsubscribed:
-        await callback.answer("❌ Вы ещё не подписались на все каналы!", show_alert=True)
+        # Show remaining channels instead of just an error toast
+        from bot.database.repositories.settings import SettingsRepository
+        s_repo = SettingsRepository(session)
+        max_ch = await s_repo.get_int("sponsor_max_channels", 10)
+        shown = unsubscribed[:max_ch] if max_ch > 0 else unsubscribed
+        total_left = len(unsubscribed)
+
+        builder = InlineKeyboardBuilder()
+        btns = [
+            InlineKeyboardButton(text="📢 Подписаться", url=ch.get("url", ""))
+            for ch in shown if ch.get("url")
+        ]
+        for i in range(0, len(btns), 2):
+            builder.row(*btns[i:i+2])
+        builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="sponsor_check"))
+
+        more_note = f" (показано {len(shown)} из {total_left})" if total_left > len(shown) else ""
+        text = (
+            f"📢 <b>Подписка на спонсоров</b>\n\n"
+            f"Осталось подписаться: <b>{total_left} канала(-ов)</b>{more_note}.\n\n"
+            "Подпишитесь на все каналы ниже и нажмите <b>«Я подписался»</b>."
+        )
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
+        except Exception:
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
+        await callback.answer()
         return
 
     # All subscribed — show fruit captcha
