@@ -118,6 +118,10 @@ class SponsorWallMiddleware(BaseMiddleware):
         else:
             shown = unsubscribed
 
+        # Record timestamp so 15-min cooldown applies before showing next batch
+        import time as _time
+        await s_repo.set(f"sw:{uid}", str(int(_time.time())))
+
         builder = InlineKeyboardBuilder()
         btns = [
             InlineKeyboardButton(text="📢 Подписаться", url=ch.get("url", ""))
@@ -128,7 +132,7 @@ class SponsorWallMiddleware(BaseMiddleware):
         builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="sponsor_check"))
 
         total_left = len(unsubscribed)
-        progress = f" (шаг {len(shown)} из {total_left})" if total_left > len(shown) else ""
+        progress = f" (ещё {total_left - len(shown)} после)" if total_left > len(shown) else ""
         text = (
             f"📢 <b>Подписка на спонсоров</b>\n\n"
             f"Осталось каналов: <b>{total_left}</b>{progress}.\n\n"

@@ -42,64 +42,28 @@ async def _find_next_pf_task(s_repo: SettingsRepository, db_user: User, pf_tasks
 
 @router.callback_query(lambda c: c.data == "menu:tasks")
 async def cb_tasks_menu(callback: CallbackQuery, db_user: User, session: AsyncSession) -> None:
-    task_repo = TaskRepository(session)
-    custom_tasks = await task_repo.all_active()
-    completed_ids = await task_repo.completed_ids(db_user.user_id)
-
-    s_repo = SettingsRepository(session)
-    tasks_reward = await s_repo.get_float("tasks_reward", 0.3)
-
-    pf_uncompleted = 0
-    if settings.piarflow_key:
-        try:
-            max_sponsors = await s_repo.get_int("piarflow_max_sponsors", 100)
-            pf_tasks = await get_sponsors(settings.piarflow_key, db_user.user_id, _pf_chat_id(), max_sponsors)
-            for sp in pf_tasks:
-                link = sp.get("link", "")
-                if link and await s_repo.get(f"pf_done:{db_user.user_id}:{link[:30]}", "") != "1":
-                    pf_uncompleted += 1
-        except Exception:
-            pass
-
-    text = (
-        f"📋 <b>Задания</b>\n\n"
-        f"Выполняй задания и получай <b>{tasks_reward:.1f} ⭐</b> за каждое!\n"
-        f"✅ Выполнено: <b>{db_user.tasks_completed_count}</b>"
-    )
-
-    if not custom_tasks and pf_uncompleted == 0:
+    if not settings.piarflow_key:
+        s_repo = SettingsRepository(session)
+        tasks_reward = await s_repo.get_float("tasks_reward", 0.3)
         builder = InlineKeyboardBuilder()
         builder.row(InlineKeyboardButton(text="🔄 Обновить", callback_data="menu:tasks"))
         builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main"))
         try:
             await callback.message.edit_text(
-                text + "\n\n😔 Заданий пока нет. Загляни позже!",
+                f"📋 <b>Задания</b>\n\n"
+                f"Выполняй задания и получай <b>{tasks_reward:.1f} ⭐</b> за каждое!\n"
+                f"✅ Выполнено: <b>{db_user.tasks_completed_count}</b>\n\n"
+                "😔 Заданий пока нет. Загляни позже!",
                 parse_mode="HTML",
                 reply_markup=builder.as_markup(),
             )
         except Exception:
-            await callback.message.answer(
-                text + "\n\n😔 Заданий пока нет. Загляни позже!",
-                parse_mode="HTML",
-                reply_markup=builder.as_markup(),
-            )
+            pass
         await callback.answer()
         return
 
-    kb = tasks_list_kb(custom_tasks, completed_ids, pf_uncompleted)
-    photo = await ContentRepository(session).get_photo("tasks")
-    if photo:
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
-        await callback.message.answer_photo(photo, caption=text, parse_mode="HTML", reply_markup=kb)
-    else:
-        try:
-            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-        except Exception:
-            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
+    await _show_pf_task(callback, db_user, session)
 
 
 async def _show_next_task(callback: CallbackQuery, db_user: User, session: AsyncSession, current_task_id: int | None = None) -> None:
@@ -251,20 +215,18 @@ async def _show_pf_task(callback: CallbackQuery, db_user: User, session: AsyncSe
     idx, sponsor = await _find_next_pf_task(s_repo, db_user, pf_tasks, skip_link=skip_link)
 
     if sponsor is None:
-        await callback.answer("✅ Все задания от спонсоров выполнены!", show_alert=True)
-        task_repo = TaskRepository(session)
-        custom_tasks = await task_repo.all_active()
-        completed_ids = await task_repo.completed_ids(db_user.user_id)
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="🔄 Обновить", callback_data="menu:tasks"))
+        builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main"))
         text = (
             f"📋 <b>Задания</b>\n\n"
-            f"Выполняй задания и получай <b>{tasks_reward:.1f} ⭐</b> за каждое!\n"
-            f"✅ Выполнено: <b>{db_user.tasks_completed_count}</b>"
+            f"✅ Выполнено: <b>{db_user.tasks_completed_count}</b>\n\n"
+            "🎉 Все задания выполнены! Загляни позже."
         )
-        kb = tasks_list_kb(custom_tasks, completed_ids, 0)
         try:
-            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
         except Exception:
-            pass
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
         return
 
     link = sponsor.get("link", "")

@@ -108,10 +108,13 @@ async def cmd_start(
 
             from aiogram.utils.keyboard import InlineKeyboardBuilder
             from aiogram.types import InlineKeyboardButton
+            import time as _time
             s_repo = SettingsRepository(session)
             max_ch = await s_repo.get_int("sponsor_max_channels", 10)
             total_left = len(unsubscribed)
             shown = unsubscribed[:max_ch] if max_ch > 0 else unsubscribed
+            # Record timestamp for 15-min cooldown between batches
+            await s_repo.set(f"sw:{db_user.user_id}", str(int(_time.time())))
 
             builder = InlineKeyboardBuilder()
             btns = [
@@ -122,7 +125,7 @@ async def cmd_start(
                 builder.row(*btns[i:i+2])
             builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="sponsor_check"))
 
-            progress = f" (шаг {len(shown)} из {total_left})" if total_left > len(shown) else ""
+            progress = f" (ещё {total_left - len(shown)} после)" if total_left > len(shown) else ""
             await message.answer(
                 f"📢 <b>Подписка на спонсоров</b>\n\n"
                 f"Осталось каналов: <b>{total_left}</b>{progress}.\n\n"
@@ -204,12 +207,28 @@ async def cb_sponsor_check(
         unsubscribed.extend(botohub_result)
 
     if unsubscribed:
-        # Show remaining channels instead of just an error toast
+        import time as _time
         from bot.database.repositories.settings import SettingsRepository
         s_repo = SettingsRepository(session)
+
+        ts_key = f"sw:{db_user.user_id}"
+        last_shown = int(float(await s_repo.get(ts_key, "0") or "0"))
+        now = int(_time.time())
+        cooldown = 900  # 15 минут
+
+        if last_shown > 0 and (now - last_shown) < cooldown:
+            wait_min = max(1, (cooldown - (now - last_shown)) // 60)
+            await callback.answer(
+                f"⏳ Следующие каналы будут доступны через {wait_min} мин.",
+                show_alert=True,
+            )
+            return
+
+        # Show next batch and record timestamp
+        await s_repo.set(ts_key, str(now))
         max_ch = await s_repo.get_int("sponsor_max_channels", 10)
-        total_left = len(unsubscribed)
         shown = unsubscribed[:max_ch] if max_ch > 0 else unsubscribed
+        total_left = len(unsubscribed)
 
         builder = InlineKeyboardBuilder()
         btns = [
@@ -220,7 +239,7 @@ async def cb_sponsor_check(
             builder.row(*btns[i:i+2])
         builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="sponsor_check"))
 
-        progress = f" (шаг {len(shown)} из {total_left})" if total_left > len(shown) else ""
+        progress = f" (ещё {total_left - len(shown)} после)" if total_left > len(shown) else ""
         text = (
             f"📢 <b>Подписка на спонсоров</b>\n\n"
             f"Осталось каналов: <b>{total_left}</b>{progress}.\n\n"
