@@ -26,13 +26,16 @@ def _pf_chat_id() -> int:
     return 0
 
 
-async def _find_next_pf_task(s_repo: SettingsRepository, db_user: User, pf_tasks: list, start_after_idx: int = -1):
-    """Returns (idx, sponsor) for next uncompleted PiarFlow task, or (None, None)."""
+async def _find_next_pf_task(s_repo: SettingsRepository, db_user: User, pf_tasks: list, skip_link: str = ""):
+    """Returns (idx, sponsor) for next uncompleted PiarFlow task, or (None, None).
+    skip_link: temporarily skip tasks whose link starts with this prefix (used for Skip button)."""
     for idx, sp in enumerate(pf_tasks):
-        if idx <= start_after_idx:
-            continue
         link = sp.get("link", "")
-        if link and await s_repo.get(f"pf_done:{db_user.user_id}:{link[:30]}", "") != "1":
+        if not link:
+            continue
+        if skip_link and link.startswith(skip_link[:30]):
+            continue
+        if await s_repo.get(f"pf_done:{db_user.user_id}:{link[:30]}", "") != "1":
             return idx, sp
     return None, None
 
@@ -244,18 +247,17 @@ async def cb_task_already_done(callback: CallbackQuery) -> None:
 
 # ── PiarFlow task handlers (one-by-one flow) ───────────────────────────────
 
-async def _show_pf_task(callback: CallbackQuery, db_user: User, session: AsyncSession, start_after_idx: int = -1) -> None:
+async def _show_pf_task(callback: CallbackQuery, db_user: User, session: AsyncSession, skip_link: str = "") -> None:
     """Shows next uncompleted PiarFlow task, or returns to tasks menu if none left."""
     s_repo = SettingsRepository(session)
     tasks_reward = await s_repo.get_float("tasks_reward", 0.3)
     max_sponsors = await s_repo.get_int("piarflow_max_sponsors", 100)
     pf_tasks = await get_sponsors(settings.piarflow_key, db_user.user_id, _pf_chat_id(), max_sponsors)
 
-    idx, sponsor = await _find_next_pf_task(s_repo, db_user, pf_tasks, start_after_idx)
+    idx, sponsor = await _find_next_pf_task(s_repo, db_user, pf_tasks, skip_link=skip_link)
 
     if sponsor is None:
         await callback.answer("✅ Все задания от спонсоров выполнены!", show_alert=True)
-        # Redirect to tasks menu
         task_repo = TaskRepository(session)
         custom_tasks = await task_repo.all_active()
         completed_ids = await task_repo.completed_ids(db_user.user_id)
@@ -280,9 +282,9 @@ async def _show_pf_task(callback: CallbackQuery, db_user: User, session: AsyncSe
         f"После выполнения жми «✅ Проверить выполнение»"
     )
     try:
-        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=pf_task_detail_kb(idx, link))
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=pf_task_detail_kb(link))
     except Exception:
-        await callback.message.answer(text, parse_mode="HTML", reply_markup=pf_task_detail_kb(idx, link))
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=pf_task_detail_kb(link))
 
 
 @router.callback_query(lambda c: c.data == "pf_task:start")
@@ -296,24 +298,21 @@ async def cb_pf_task_start(callback: CallbackQuery, db_user: User, session: Asyn
 
 @router.callback_query(lambda c: c.data and c.data.startswith("pf_task:skip:"))
 async def cb_pf_task_skip(callback: CallbackQuery, db_user: User, session: AsyncSession) -> None:
-    try:
-        idx = int(callback.data.split(":")[2])
-    except (IndexError, ValueError):
-        await callback.answer()
-        return
+    link_prefix = callback.data[len("pf_task:skip:"):]
     if not settings.piarflow_key:
         await callback.answer()
         return
     await callback.answer()
-    await _show_pf_task(callback, db_user, session, start_after_idx=idx)
+    await _show_pf_task(callback, db_user, session, skip_link=link_prefix)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("pf_task:check:"))
 async def cb_pf_task_check(callback: CallbackQuery, db_user: User, session: AsyncSession, bot: Bot) -> None:
-    try:
-        idx = int(callback.data.split(":")[2])
-    except (IndexError, ValueError):
-        await callback.answer()
+    link_prefix = callback.data[len("pf_task:check:"):]
+
+    # Old buttons stored numeric idx — ask user to reopen the task
+    if not link_prefix or link_prefix.isdigit():
+        await callback.answer("Нажмите «Задания» снова для обновления.", show_alert=True)
         return
 
     if not settings.piarflow_key:
@@ -324,28 +323,32 @@ async def cb_pf_task_check(callback: CallbackQuery, db_user: User, session: Asyn
     max_sponsors = await s_repo.get_int("piarflow_max_sponsors", 100)
     tasks_reward = await s_repo.get_float("tasks_reward", 0.3)
 
-    pf_tasks = await get_sponsors(settings.piarflow_key, db_user.user_id, _pf_chat_id(), max_sponsors)
-
-    if idx >= len(pf_tasks):
-        await callback.answer("Задание не найдено.", show_alert=True)
-        return
-
-    sponsor = pf_tasks[idx]
-    link = sponsor.get("link", "")
-
-    key = f"pf_done:{db_user.user_id}:{link[:30]}"
+    key = f"pf_done:{db_user.user_id}:{link_prefix[:30]}"
     if await s_repo.get(key, "") == "1":
         await callback.answer("✅ Задание уже выполнено!", show_alert=True)
-        await _show_pf_task(callback, db_user, session, start_after_idx=idx)
+        await _show_pf_task(callback, db_user, session)
         return
 
-    subscribed = await check_sponsors(settings.piarflow_key, db_user.user_id, [link])
-    if not subscribed:
-        await callback.answer(
-            "❌ Вы не подписаны на канал. Подпишитесь и попробуйте ещё раз.",
-            show_alert=True,
-        )
-        return
+    pf_tasks = await get_sponsors(settings.piarflow_key, db_user.user_id, _pf_chat_id(), max_sponsors)
+
+    # Find task by link prefix (stable across list reorderings)
+    sponsor = None
+    for sp in pf_tasks:
+        if sp.get("link", "").startswith(link_prefix[:30]):
+            sponsor = sp
+            break
+
+    if sponsor is not None:
+        # Task still in PF list → user hasn't subscribed yet, verify
+        full_link = sponsor.get("link", "")
+        subscribed = await check_sponsors(settings.piarflow_key, db_user.user_id, [full_link])
+        if not subscribed:
+            await callback.answer(
+                "❌ Вы не подписаны на канал. Подпишитесь и попробуйте ещё раз.",
+                show_alert=True,
+            )
+            return
+    # else: task absent from PF list → user already subscribed (PF removed it)
 
     await s_repo.set(key, "1")
     db_user.stars_balance = round(float(db_user.stars_balance) + tasks_reward, 2)
@@ -353,6 +356,4 @@ async def cb_pf_task_check(callback: CallbackQuery, db_user: User, session: Asyn
     await session.commit()
     await callback.answer(f"✅ Задание выполнено! +{tasks_reward:.1f} ⭐", show_alert=True)
     await check_referral_reward(db_user, session, bot)
-
-    # Show next uncompleted task
-    await _show_pf_task(callback, db_user, session, start_after_idx=idx)
+    await _show_pf_task(callback, db_user, session)
