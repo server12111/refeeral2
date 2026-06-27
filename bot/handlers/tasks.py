@@ -309,7 +309,7 @@ async def cb_pf_task_skip(callback: CallbackQuery, db_user: User, session: Async
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("pf_task:check:"))
-async def cb_pf_task_check(callback: CallbackQuery, db_user: User, session: AsyncSession) -> None:
+async def cb_pf_task_check(callback: CallbackQuery, db_user: User, session: AsyncSession, bot: Bot) -> None:
     try:
         idx = int(callback.data.split(":")[2])
     except (IndexError, ValueError):
@@ -352,6 +352,7 @@ async def cb_pf_task_check(callback: CallbackQuery, db_user: User, session: Asyn
     db_user.tasks_completed_count += 1
     await session.commit()
     await callback.answer(f"✅ Задание выполнено! +{tasks_reward:.1f} ⭐", show_alert=True)
+    await check_referral_reward(db_user, session, bot)
 
     # Show next uncompleted task
     await _show_pf_task(callback, db_user, session, start_after_idx=idx)
